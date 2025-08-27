@@ -21,8 +21,7 @@ Page {
             Label { text: controller ? controller.info : "" }
         }
     }
-
-    // Agora usamos TableView com o model vindo do backend (QAbstractTableModel)
+    
     ScrollView {
         anchors.fill: parent
         clip: true

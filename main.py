@@ -4,13 +4,15 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
 
 from csv_controller import CSVController
+from arff_controller import ARFFController
 
 
 def main() -> int:
     app = QApplication(sys.argv)
 
-    # Disponibiliza CSVController no QML via: import App 1.0
+    # Disponibiliza controladores no QML via: import App 1.0
     qmlRegisterType(CSVController, "App", 1, 0, "CSVController")
+    qmlRegisterType(ARFFController, "App", 1, 0, "ARFFController")
 
     engine = QQmlApplicationEngine()
     qml_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.qml")
