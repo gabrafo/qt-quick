@@ -1,5 +1,5 @@
 import os
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 import pandas as pd
 from PySide6.QtCore import QObject, Signal, Slot, QUrl, Property
@@ -7,19 +7,15 @@ from table_model import DataFrameModel
 
 
 class CSVController(QObject):
-    """Backend simples para carregar CSV em um DataFrame e expor para QML.
-
-    Regras KISS:
-    - Expõe apenas sinais e propriedades necessárias para a tela 1.
-    - Usa pandas para leitura do arquivo CSV.
-    - Evita acoplamento: QML solicita ações via Slot; atualizações são notificadas por Signal.
-    """
+    """Backend simples para carregar CSV em um DataFrame e expor para QML."""
 
     dataframeChanged = Signal()
     fileNameChanged = Signal()
     errorOccurred = Signal(str)
     successOccurred = Signal(str)
     infoChanged = Signal()
+    # Mantém simetria com ARFFController para a tela de tipos
+    metadataChanged = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -27,6 +23,8 @@ class CSVController(QObject):
         self._file_name: str = ""
         # Model baseado em QAbstractTableModel para ser usado no QML
         self._model = DataFrameModel()
+        # Tipos selecionados manualmente pelo usuário (override)
+        self._selected_types: Dict[str, str] = {}
 
     @Property(str, notify=fileNameChanged)
     def fileName(self) -> str:
@@ -61,6 +59,9 @@ class CSVController(QObject):
             self._model.setDataFrame(self._df)
             self.dataframeChanged.emit()
             self.infoChanged.emit()
+            # Reset de escolhas de tipos ao carregar nova base
+            self._selected_types.clear()
+            self.metadataChanged.emit()
         except Exception as e: 
             self._df = None
             self.dataframeChanged.emit()
@@ -106,6 +107,10 @@ class CSVController(QObject):
     @Slot(str, result=str) 
     def getSuggestedType(self, attribute_name: str) -> str:
         """Sugere tipo ARFF baseado no tipo de dados do pandas."""
+        # 1) Prioriza o que o usuário escolheu manualmente
+        if attribute_name in getattr(self, "_selected_types", {}):
+            return self._selected_types[attribute_name]
+
         if self._df is None or attribute_name not in self._df.columns:
             return "Textual"
         
@@ -145,8 +150,13 @@ class CSVController(QObject):
     @Slot(str, str)
     def setAttributeType(self, attribute_name: str, new_type: str) -> None:
         """Define um novo tipo para um atributo (armazenado internamente)."""
-        # Para CSV, só armazenamos a informação para eventual conversão
-        pass
+        if not attribute_name:
+            return
+        if not hasattr(self, "_selected_types"):
+            self._selected_types = {}
+        self._selected_types[attribute_name] = new_type
+        # Notifica UI para possíveis re-renderizações (ex.: exemplos/tipos)
+        self.metadataChanged.emit()
     
     @Slot(str)
     def generateArff(self, output_path: str) -> None:
@@ -159,14 +169,26 @@ class CSVController(QObject):
             # Para simplificar, vamos gerar com tipos básicos
             import arff
             
-            # Constrói atributos
+            # Constrói atributos respeitando overrides do usuário
             attributes = []
             for col in self._df.columns:
-                dtype = self._df[col].dtype
-                if pd.api.types.is_numeric_dtype(dtype):
+                selected = self._selected_types.get(col) if hasattr(self, "_selected_types") else None
+                if selected == 'Numérico':
                     attributes.append((col, 'NUMERIC'))
-                else:
+                elif selected == 'Data':
+                    attributes.append((col, 'DATE'))
+                elif selected == 'Nominal':
+                    uniques = list(set(str(v) for v in self._df[col].dropna().unique().tolist()))[:50]
+                    attributes.append((col, uniques if uniques else 'STRING'))
+                elif selected == 'Relacional':
                     attributes.append((col, 'STRING'))
+                else:
+                    # fallback: heurística baseada no dtype do pandas
+                    dtype = self._df[col].dtype
+                    if pd.api.types.is_numeric_dtype(dtype):
+                        attributes.append((col, 'NUMERIC'))
+                    else:
+                        attributes.append((col, 'STRING'))
             
             # Converte dados
             data = []
@@ -208,12 +230,14 @@ class CSVController(QObject):
 
             attributes = []
             for col in self._df.columns:
-                suggested = self.getSuggestedType(col)
-                if suggested == 'Numérico':
+                selected = self._selected_types.get(col) if hasattr(self, "_selected_types") else None
+                # Se não houver override, usa a sugestão (que também respeita override)
+                chosen = selected or self.getSuggestedType(col)
+                if chosen == 'Numérico':
                     attributes.append((col, 'NUMERIC'))
-                elif suggested == 'Data':
+                elif chosen == 'Data':
                     attributes.append((col, 'DATE'))
-                elif suggested == 'Nominal':
+                elif chosen == 'Nominal':
                     uniques = list(set(str(v) for v in self._df[col].dropna().unique().tolist()))[:50]
                     attributes.append((col, uniques if uniques else 'STRING'))
                 else:
